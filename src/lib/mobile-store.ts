@@ -96,3 +96,4 @@ export async function setDemoModeEnabled(enabled: boolean): Promise<void> {
     console.error("Failed to save demo mode state", err);
   }
 }
+

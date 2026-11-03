@@ -57,3 +57,4 @@ eas build --platform android --profile preview
 # 4. Build iOS for TestFlight
 eas build --platform ios --profile production
 ```
+
