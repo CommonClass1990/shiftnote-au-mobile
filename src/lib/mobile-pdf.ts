@@ -5,7 +5,7 @@
 
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import { formatInvoiceReference } from "./ndis-catalogue";
 import type { Participant, ShiftAndClaim, WorkerProfile } from "./types";
 
@@ -13,6 +13,45 @@ export interface MobilePdfOptions {
   claim: ShiftAndClaim;
   participant: Participant;
   worker: WorkerProfile;
+}
+
+/**
+ * Standard PDF fonts only support WinAnsi characters. Replace common Unicode
+ * punctuation and drop anything else so user-entered names or dictated notes
+ * (emoji, smart quotes, macrons, line breaks) can't crash PDF generation.
+ */
+export function toWinAnsiSafe(text: string): string {
+  return text
+    .replace(/[\u2018\u2019\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201F]/g, '"')
+    .replace(/[\u2013]/g, "-")
+    .replace(/[\u2014]/g, "-")
+    .replace(/[\u2026]/g, "...")
+    .replace(/[\r\n\t]+/g, " ")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E\u00A0-\u00FF]/g, "")
+    .replace(/ {2,}/g, " ")
+    .replace(/ +\)/g, ")")
+    .trim();
+}
+
+/** Greedy word-wrap so long OCR descriptions and case notes are never truncated. */
+export function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  const words = toWinAnsiSafe(text).split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth || !current) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [""];
 }
 
 export async function generateAndShareMobileInvoice(
@@ -23,7 +62,8 @@ export async function generateAndShareMobileInvoice(
   // 1. Generate PDF in memory with pdf-lib
   const pdfDoc = await PDFDocument.create();
   pdfDoc.setTitle(`Tax Invoice ${claim.invoice_number} - ${participant.full_name}`);
-  const page = pdfDoc.addPage([595.28, 841.89]); // A4 Portrait
+  const pageSize: [number, number] = [595.28, 841.89]; // A4 Portrait
+  let page: PDFPage = pdfDoc.addPage(pageSize);
   const { width, height } = page.getSize();
 
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -32,6 +72,14 @@ export async function generateAndShareMobileInvoice(
   const navy = rgb(0.06, 0.09, 0.16);
   const teal = rgb(0.05, 0.58, 0.53);
   const margin = 40;
+
+  // Start a new page when the next block would run off the bottom
+  const ensureSpace = (needed: number) => {
+    if (y - needed < margin) {
+      page = pdfDoc.addPage(pageSize);
+      y = height - margin;
+    }
+  };
 
   // Top header banner
   page.drawRectangle({
@@ -50,7 +98,7 @@ export async function generateAndShareMobileInvoice(
     color: rgb(1, 1, 1),
   });
 
-  page.drawText("AUSTRALIAN NDIS CORE SUPPORTS — GST-FREE SUPPLY (s38-38)", {
+  page.drawText("AUSTRALIAN NDIS CORE SUPPORTS - GST-FREE SUPPLY (s38-38)", {
     x: margin,
     y: height - 60,
     size: 9,
@@ -60,7 +108,7 @@ export async function generateAndShareMobileInvoice(
 
   // Invoice & Worker Metadata
   let y = height - 120;
-  page.drawText(`Provider: ${worker.business_name} (ABN: ${worker.abn})`, {
+  page.drawText(toWinAnsiSafe(`Provider: ${worker.business_name} (ABN: ${worker.abn})`), {
     x: margin,
     y,
     size: 10,
@@ -79,7 +127,7 @@ export async function generateAndShareMobileInvoice(
 
   y -= 16;
   const invoiceRef = formatInvoiceReference(participant.ndis_number, participant.full_name);
-  page.drawText(`Participant: ${participant.full_name} (${invoiceRef})`, {
+  page.drawText(toWinAnsiSafe(`Participant: ${participant.full_name} (${invoiceRef})`), {
     x: margin,
     y,
     size: 10,
@@ -88,7 +136,7 @@ export async function generateAndShareMobileInvoice(
   });
 
   y -= 16;
-  page.drawText(`Plan Manager: ${participant.plan_manager_name || "Self-Managed"}`, {
+  page.drawText(toWinAnsiSafe(`Plan Manager: ${participant.plan_manager_name || "Self-Managed"}`), {
     x: margin,
     y,
     size: 9,
@@ -113,16 +161,23 @@ export async function generateAndShareMobileInvoice(
   page.drawText("Total (AUD)", { x: width - margin - 50, y, size: 9, font: fontBold, color: navy });
 
   y -= 10;
+  const descWidth = width - 180 - margin - 20;
   for (const item of claim.line_items) {
+    // Plan Manager OCR needs the full "{code} - {name} ({date}, {start}-{end})" string
+    const descLines = wrapText(item.description, fontRegular, 8, descWidth);
+    ensureSpace(18 + (descLines.length - 1) * 10);
     y -= 18;
-    const shortDesc = item.description.length > 55 ? item.description.slice(0, 52) + "..." : item.description;
-    page.drawText(shortDesc, { x: margin, y, size: 8, font: fontRegular, color: navy });
     page.drawText(`${item.quantity} ${item.unit}`, { x: width - 180, y, size: 8, font: fontRegular, color: navy });
     page.drawText(`$${item.unit_price.toFixed(2)}`, { x: width - 130, y, size: 8, font: fontRegular, color: navy });
     page.drawText(`$${item.line_total.toFixed(2)}`, { x: width - margin - 50, y, size: 8, font: fontBold, color: navy });
+    descLines.forEach((line, idx) => {
+      if (idx > 0) y -= 10;
+      page.drawText(line, { x: margin, y, size: 8, font: fontRegular, color: navy });
+    });
   }
 
   // Total summary
+  ensureSpace(25 + 20 + 35 + 48);
   y -= 25;
   page.drawLine({
     start: { x: margin, y },
@@ -133,14 +188,16 @@ export async function generateAndShareMobileInvoice(
 
   y -= 20;
   page.drawText("TOTAL AMOUNT DUE (GST-FREE):", {
-    x: width - 260,
+    x: width - 290,
     y,
     size: 10,
     font: fontBold,
     color: navy,
   });
-  page.drawText(`$${claim.total_amount.toFixed(2)} AUD`, {
-    x: width - margin - 50,
+  const totalLabel = `$${claim.total_amount.toFixed(2)} AUD`;
+  page.drawText(totalLabel, {
+    // Right-align so larger totals don't run off the page
+    x: width - margin - fontBold.widthOfTextAtSize(totalLabel, 12),
     y,
     size: 12,
     font: fontBold,
@@ -175,6 +232,7 @@ export async function generateAndShareMobileInvoice(
 
   // 3-Part Clinical Case Notes on Audit Page
   y -= 70;
+  ensureSpace(16);
   page.drawText("NDIS QUALITY & SAFEGUARDS COMMISSION AUDIT CASE NOTES", {
     x: margin,
     y,
@@ -183,29 +241,26 @@ export async function generateAndShareMobileInvoice(
     color: teal,
   });
 
-  y -= 16;
-  page.drawText("1. Activities Delivered:", { x: margin, y, size: 8.5, font: fontBold, color: navy });
-  y -= 12;
-  const actNote = claim.case_note_activities.slice(0, 140);
-  page.drawText(actNote, { x: margin, y, size: 7.5, font: fontRegular, color: rgb(0.2, 0.25, 0.3) });
+  const noteSections: Array<[string, string]> = [
+    ["1. Activities Delivered:", claim.case_note_activities],
+    ["2. Participant Engagement & Choice:", claim.case_note_engagement],
+    ["3. NDIS Plan Goals Progress:", claim.case_note_goals],
+  ];
+  for (const [title, body] of noteSections) {
+    y -= 16;
+    ensureSpace(12);
+    page.drawText(title, { x: margin, y, size: 8.5, font: fontBold, color: navy });
+    // Case notes are audit records: wrap the full text instead of cutting at 140 chars
+    for (const line of wrapText(body, fontRegular, 7.5, width - margin * 2)) {
+      y -= 11;
+      ensureSpace(0);
+      page.drawText(line, { x: margin, y, size: 7.5, font: fontRegular, color: rgb(0.2, 0.25, 0.3) });
+    }
+  }
 
-  y -= 16;
-  page.drawText("2. Participant Engagement & Choice:", { x: margin, y, size: 8.5, font: fontBold, color: navy });
-  y -= 12;
-  const engNote = claim.case_note_engagement.slice(0, 140);
-  page.drawText(engNote, { x: margin, y, size: 7.5, font: fontRegular, color: rgb(0.2, 0.25, 0.3) });
-
-  y -= 16;
-  page.drawText("3. NDIS Plan Goals Progress:", { x: margin, y, size: 8.5, font: fontBold, color: navy });
-  y -= 12;
-  const goalNote = claim.case_note_goals.slice(0, 140);
-  page.drawText(goalNote, { x: margin, y, size: 7.5, font: fontRegular, color: rgb(0.2, 0.25, 0.3) });
-
-  const pdfBytes = await pdfDoc.save();
-
-  // 2. Convert to base64 and write to device filesystem
-  const base64Data = Buffer.from(pdfBytes).toString("base64");
-  const fileName = `${claim.invoice_number}_NDIS_Invoice.pdf`;
+  // 2. Serialise straight to base64 (Node's Buffer doesn't exist in React Native)
+  const base64Data = await pdfDoc.saveAsBase64();
+  const fileName = `${claim.invoice_number.replace(/[^A-Za-z0-9_-]/g, "_")}_NDIS_Invoice.pdf`;
   const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
 
   await FileSystem.writeAsStringAsync(fileUri, base64Data, {

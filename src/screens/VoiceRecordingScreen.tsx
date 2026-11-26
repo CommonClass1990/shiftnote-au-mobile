@@ -64,6 +64,20 @@ export function VoiceRecordingScreen() {
 
   const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks whether the finger is still on the button. If the user releases while
+  // the permission prompt / recorder start-up is still pending, we must not leave
+  // a recording running with no way to stop it.
+  const pressActiveRef = useRef<boolean>(false);
+  const startingRef = useRef<boolean>(false);
+
+  // Stop the timer and release the microphone if the screen unmounts (tab switch)
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      recordingRef.current?.stopAndUnloadAsync().catch(() => undefined);
+      recordingRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -90,7 +104,9 @@ export function VoiceRecordingScreen() {
   };
 
   const startRecording = async () => {
-    if (isRecording || isProcessing) return;
+    pressActiveRef.current = true;
+    if (isRecording || isProcessing || startingRef.current) return;
+    startingRef.current = true;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const permission = await Audio.requestPermissionsAsync();
@@ -107,6 +123,11 @@ export function VoiceRecordingScreen() {
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
+      if (!pressActiveRef.current) {
+        // Released before the recorder was ready (e.g. during the permission prompt)
+        await recording.stopAndUnloadAsync().catch(() => undefined);
+        return;
+      }
       recordingRef.current = recording;
       setIsRecording(true);
       setRecordingDurationSecs(0);
@@ -114,14 +135,25 @@ export function VoiceRecordingScreen() {
       timerRef.current = setInterval(() => {
         setRecordingDurationSecs((prev) => prev + 1);
       }, 1000);
-    } catch {
-      // In simulator or fallback, use simulated flow
-      simulateVoiceNote();
+    } catch (err) {
+      if (demoMode) {
+        // In simulator or demo, fall back to the simulated flow
+        simulateVoiceNote();
+      } else {
+        // Never fabricate a billable claim from sample data outside demo mode
+        Alert.alert(
+          "Recording Unavailable",
+          err instanceof Error ? err.message : "Could not start the microphone."
+        );
+      }
+    } finally {
+      startingRef.current = false;
     }
   };
 
   const stopRecording = async () => {
-    if (!isRecording) return;
+    pressActiveRef.current = false;
+    if (!recordingRef.current) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -138,23 +170,44 @@ export function VoiceRecordingScreen() {
       } else {
         setIsRecording(false);
       }
-    } catch {
+    } catch (err) {
+      recordingRef.current = null;
       setIsRecording(false);
-      simulateVoiceNote();
+      if (demoMode) {
+        simulateVoiceNote();
+      } else {
+        Alert.alert(
+          "Recording Failed",
+          err instanceof Error ? err.message : "The voice note could not be saved."
+        );
+      }
     }
   };
 
   const processAudio = async (uri?: string, transcriptOverride?: string) => {
+    // Sample transcripts are only substituted in demo mode. Speech-to-text is not
+    // wired up yet, so in live mode we refuse to invent a billable claim.
+    const transcript =
+      transcriptOverride ||
+      (demoMode
+        ? SAMPLE_VOICE_TRANSCRIPTS[selectedParticipant.id] ||
+          SAMPLE_VOICE_TRANSCRIPTS["11111111-1111-4111-8111-111111111101"]!
+        : undefined);
+    if (!transcript) {
+      Alert.alert(
+        "Transcription Not Available",
+        "Your recording was captured, but voice transcription isn't connected yet. Turn on Demo mode to try the claim flow with a sample transcript."
+      );
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const claim = await processMobileVoiceNote({
         participant: selectedParticipant,
         worker,
         audioUri: uri,
-        transcriptOverride:
-          transcriptOverride ||
-          SAMPLE_VOICE_TRANSCRIPTS[selectedParticipant.id] ||
-          SAMPLE_VOICE_TRANSCRIPTS["11111111-1111-4111-8111-111111111101"]!,
+        transcriptOverride: transcript,
       });
       await upsertStoredShift(claim);
       setActiveClaim(claim);
@@ -175,12 +228,19 @@ export function VoiceRecordingScreen() {
 
   const handleSharePdf = async () => {
     if (!activeClaim) return;
+    // Invoice the participant the claim was created for, not whoever is
+    // currently selected in the picker (the user may have switched since).
+    const claimParticipant = participants.find((p) => p.id === activeClaim.participant_id);
+    if (!claimParticipant) {
+      Alert.alert("Share Failed", "The participant for this claim could not be found.");
+      return;
+    }
     Haptics.selectionAsync();
     setSharingPdf(true);
     try {
       await generateAndShareMobileInvoice({
         claim: activeClaim,
-        participant: selectedParticipant,
+        participant: claimParticipant,
         worker,
       });
     } catch (err) {
