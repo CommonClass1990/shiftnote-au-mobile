@@ -38,7 +38,11 @@ export const ALLOWED_NDIS_CODES: readonly AllowedNdisCode[] = [
 ] as const;
 
 /**
- * Deterministic NDIS Core Supports Lookup Table (FY2025-26 NDIS Price Guide Caps)
+ * Deterministic NDIS Core Supports Lookup Table.
+ * `priceCapAud` holds the current national maximum amounts from the
+ * NDIS Pricing Schedule 2026-27 (effective 1 July 2026, reconfirmed in the
+ * schedule effective 24 September 2026). Shifts delivered before 1 July 2026
+ * are capped using PRICE_CAPS_2025_26 below (see getPriceCapForDate).
  * Never allow any AI model or client payload to use codes outside this table.
  */
 export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
@@ -52,7 +56,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "self_care",
     timeBracket: "weekday_daytime",
     unit: "H",
-    priceCapAud: 67.56,
+    priceCapAud: 73.58,
   },
   "01_015_0107_1_1": {
     code: "01_015_0107_1_1",
@@ -61,7 +65,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "self_care",
     timeBracket: "weekday_evening",
     unit: "H",
-    priceCapAud: 74.44,
+    priceCapAud: 81.07,
   },
   "01_013_0107_1_1": {
     code: "01_013_0107_1_1",
@@ -70,7 +74,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "self_care",
     timeBracket: "saturday",
     unit: "H",
-    priceCapAud: 95.07,
+    priceCapAud: 103.54,
   },
   "01_014_0107_1_1": {
     code: "01_014_0107_1_1",
@@ -79,7 +83,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "self_care",
     timeBracket: "sunday",
     unit: "H",
-    priceCapAud: 122.59,
+    priceCapAud: 133.50,
   },
   "01_012_0107_1_1": {
     code: "01_012_0107_1_1",
@@ -88,7 +92,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "self_care",
     timeBracket: "public_holiday",
     unit: "H",
-    priceCapAud: 150.10,
+    priceCapAud: 163.46,
   },
 
   // --------------------------------------------------------------------------
@@ -101,7 +105,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "community_access",
     timeBracket: "weekday_daytime",
     unit: "H",
-    priceCapAud: 67.56,
+    priceCapAud: 73.58,
   },
   "04_103_0125_6_1": {
     code: "04_103_0125_6_1",
@@ -110,7 +114,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "community_access",
     timeBracket: "weekday_evening",
     unit: "H",
-    priceCapAud: 74.44,
+    priceCapAud: 81.07,
   },
   "04_105_0125_6_1": {
     code: "04_105_0125_6_1",
@@ -119,7 +123,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "community_access",
     timeBracket: "saturday",
     unit: "H",
-    priceCapAud: 95.07,
+    priceCapAud: 103.54,
   },
   "04_106_0125_6_1": {
     code: "04_106_0125_6_1",
@@ -128,7 +132,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "community_access",
     timeBracket: "sunday",
     unit: "H",
-    priceCapAud: 122.59,
+    priceCapAud: 133.50,
   },
   "04_102_0125_6_1": {
     code: "04_102_0125_6_1",
@@ -137,7 +141,7 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
     supportCategory: "community_access",
     timeBracket: "public_holiday",
     unit: "H",
-    priceCapAud: 150.10,
+    priceCapAud: 163.46,
   },
 
   // --------------------------------------------------------------------------
@@ -164,6 +168,43 @@ export const NDIS_CATALOGUE: Record<AllowedNdisCode, NdisCatalogueItem> = {
 };
 
 /**
+ * National maximum amounts from the NDIS Pricing Arrangements and Price Limits
+ * 2025-26, applied to shifts delivered from 1 July 2025 to 30 June 2026.
+ */
+export const PRICE_CAPS_2025_26: Readonly<Record<AllowedNdisCode, number>> = {
+  "01_011_0107_1_1": 70.23,
+  "01_015_0107_1_1": 77.38,
+  "01_013_0107_1_1": 98.83,
+  "01_014_0107_1_1": 127.43,
+  "01_012_0107_1_1": 156.03,
+  "04_104_0125_6_1": 70.23,
+  "04_103_0125_6_1": 77.38,
+  "04_105_0125_6_1": 98.83,
+  "04_106_0125_6_1": 127.43,
+  "04_102_0125_6_1": 156.03,
+  "01_799_0107_1_1": 0.99,
+  "04_799_0125_6_1": 0.99,
+};
+
+/** First shift date (inclusive) that the current `priceCapAud` values apply to. */
+export const CURRENT_PRICE_CAPS_EFFECTIVE_FROM = "2026-07-01";
+
+/**
+ * Returns the national price cap for a code on a given shift date (YYYY-MM-DD).
+ * Without a date, the current (2026-27) cap is returned.
+ */
+export function getPriceCapForDate(code: AllowedNdisCode, shiftDate?: string): number {
+  const item = NDIS_CATALOGUE[code];
+  if (!item) {
+    throw new Error(`NDIS code "${code}" is not in the approved deterministic catalogue.`);
+  }
+  if (shiftDate && shiftDate < CURRENT_PRICE_CAPS_EFFECTIVE_FROM) {
+    return PRICE_CAPS_2025_26[code];
+  }
+  return item.priceCapAud;
+}
+
+/**
  * National & NSW Statutory Public Holidays (YYYY-MM-DD) for deterministic auto-detection
  */
 export const AUSTRALIAN_PUBLIC_HOLIDAYS: ReadonlySet<string> = new Set([
@@ -185,11 +226,26 @@ export const AUSTRALIAN_PUBLIC_HOLIDAYS: ReadonlySet<string> = new Set([
   "2026-04-05", // Easter Sunday
   "2026-04-06", // Easter Monday
   "2026-04-25", // Anzac Day
+  "2026-04-27", // Anzac Day Additional Day (NSW)
   "2026-06-08", // King's Birthday
   "2026-10-05", // Labour Day (NSW/ACT/SA)
   "2026-12-25", // Christmas Day
   "2026-12-26", // Boxing Day
-  "2026-12-28", // Boxing Day Observed
+  "2026-12-28", // Boxing Day Additional Day
+  "2027-01-01", // New Year's Day
+  "2027-01-26", // Australia Day
+  "2027-03-26", // Good Friday
+  "2027-03-27", // Easter Saturday
+  "2027-03-28", // Easter Sunday
+  "2027-03-29", // Easter Monday
+  "2027-04-25", // Anzac Day
+  "2027-04-26", // Anzac Day Additional Day (NSW)
+  "2027-06-14", // King's Birthday
+  "2027-10-04", // Labour Day (NSW/ACT/SA)
+  "2027-12-25", // Christmas Day
+  "2027-12-26", // Boxing Day
+  "2027-12-27", // Christmas Day Additional Day
+  "2027-12-28", // Boxing Day Additional Day
 ]);
 
 /**
@@ -230,15 +286,20 @@ export function calculateDurationHours(startTime: string, endTime: string): numb
  * Resolves the NDIS Pricing Arrangements day/time bracket from shift_date,
  * start_time, end_time, and public holiday flag.
  *
- * NDIS Rules:
+ * NDIS Rules (Pricing Arrangements 2025-26 / Pricing Schedule 2026-27):
  * - Public Holiday overrides all days.
  * - Sunday -> "sunday"
  * - Saturday -> "saturday"
  * - Weekday (Mon-Fri):
- *   - If shift finishes after 20:00 (8:00 PM) or starts at/after 18:00 (6:00 PM),
- *     it falls under "weekday_evening" (NDIS Weekday Evening rate applies when
- *     support occurs on a weekday after 8:00 PM or evening shift window >= 18:00).
- *   - Otherwise -> "weekday_daytime" (06:00 - 20:00).
+ *   - Weekday Daytime: starts at or after 06:00 and ends at or before 20:00.
+ *   - Weekday Evening: starts at or after 20:00 and finishes at or before midnight.
+ *   - A support that crosses from daytime into the evening and is delivered by
+ *     a single worker is charged at the higher (evening) rate for the whole
+ *     support, so any weekday shift finishing after 20:00 is "weekday_evening".
+ *   - Shifts that cross midnight or start before 06:00 are Weekday Night
+ *     supports. Night items are not in this catalogue yet, so they currently
+ *     resolve to "weekday_evening" (the nearest lower rate) rather than being
+ *     overcharged.
  */
 export function resolveTimeBracket(
   shiftDate: string,
@@ -270,9 +331,9 @@ export function resolveTimeBracket(
   const startMins = parseTimeMinutes(startTime);
   const endMins = parseTimeMinutes(endTime);
 
-  // Weekday Evening applies if shift extends past 20:00 (1200 mins), starts at/after 18:00 (1080 mins),
-  // or crosses midnight (endMins < startMins).
-  if (endMins > 20 * 60 || startMins >= 18 * 60 || endMins <= startMins) {
+  // Weekday Evening applies if the shift finishes after 20:00, starts at/after 20:00,
+  // or crosses midnight (endMins <= startMins). Starting at 18:00 alone is still daytime.
+  if (endMins > 20 * 60 || startMins >= 20 * 60 || endMins <= startMins) {
     return "weekday_evening";
   }
 
@@ -330,13 +391,10 @@ export function resolveTravelItemCode(category: SupportCategory): AllowedNdisCod
  */
 export function enforceNdisPriceCap(
   code: AllowedNdisCode,
-  requestedRate?: number | null
+  requestedRate?: number | null,
+  shiftDate?: string
 ): { appliedRate: number; priceCap: number; wasCapped: boolean } {
-  const item = NDIS_CATALOGUE[code];
-  if (!item) {
-    throw new Error(`NDIS code "${code}" is not in the approved deterministic catalogue.`);
-  }
-  const priceCap = item.priceCapAud;
+  const priceCap = getPriceCapForDate(code, shiftDate);
   if (requestedRate === undefined || requestedRate === null || requestedRate <= 0) {
     return { appliedRate: priceCap, priceCap, wasCapped: false };
   }
@@ -410,7 +468,11 @@ export function buildValidatedShiftLineItems(params: {
 
   const primaryCode = resolveSupportItemCode(params.supportCategory, bracket);
   const primaryCatalogueItem = NDIS_CATALOGUE[primaryCode];
-  const { appliedRate } = enforceNdisPriceCap(primaryCode, params.hourlyRateOverride);
+  const { appliedRate, priceCap: primaryPriceCap } = enforceNdisPriceCap(
+    primaryCode,
+    params.hourlyRateOverride,
+    params.shiftDate
+  );
 
   const primaryLineTotal = Math.round(durationHours * appliedRate * 100) / 100;
 
@@ -428,7 +490,7 @@ export function buildValidatedShiftLineItems(params: {
       unit: "H",
       quantity: durationHours,
       unit_price: appliedRate,
-      max_price_limit: primaryCatalogueItem.priceCapAud,
+      max_price_limit: primaryPriceCap,
       line_total: primaryLineTotal,
       gst_code: "EXEMPTOUTPUT",
     },
@@ -438,7 +500,11 @@ export function buildValidatedShiftLineItems(params: {
   if (kms > 0) {
     const travelCode = resolveTravelItemCode(params.supportCategory);
     const travelCatalogueItem = NDIS_CATALOGUE[travelCode];
-    const { appliedRate: travelRate } = enforceNdisPriceCap(travelCode, null);
+    const { appliedRate: travelRate, priceCap: travelPriceCap } = enforceNdisPriceCap(
+      travelCode,
+      null,
+      params.shiftDate
+    );
     const travelTotal = Math.round(kms * travelRate * 100) / 100;
 
     lineItems.push({
@@ -454,7 +520,7 @@ export function buildValidatedShiftLineItems(params: {
       unit: "KM",
       quantity: kms,
       unit_price: travelRate,
-      max_price_limit: travelCatalogueItem.priceCapAud,
+      max_price_limit: travelPriceCap,
       line_total: travelTotal,
       gst_code: "EXEMPTOUTPUT",
     });
